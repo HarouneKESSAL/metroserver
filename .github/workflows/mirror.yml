@@ -1,0 +1,43 @@
+# Keeps `master` in this fork an exact copy of the original repository's `master`, once a day.
+# If the original disappears (deleted or made private), this job just warns and the last copy stays here.
+# Updates are fast-forward only: if the original's history were ever rewritten or wiped, the push is
+# refused (the job fails and GitHub emails you) instead of overwriting the copy kept here.
+name: Mirror upstream
+
+on:
+  schedule:
+    - cron: '17 4 * * *'   # daily, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM: https://github.com/MetrolistGroup/metroserver.git
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy the original's master into this fork
+        run: |
+          git init -q mirror && cd mirror
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          if ! git fetch -q "$UPSTREAM" +refs/heads/master:refs/remotes/upstream/master; then
+            echo "::warning::The original repository ($UPSTREAM) can't be reached. Keeping the last copy."
+            exit 0
+          fi
+          git push origin refs/remotes/upstream/master:refs/heads/master
+          echo "master is at $(git rev-parse --short refs/remotes/upstream/master)"
+
+      - name: Keep this schedule active
+        # GitHub pauses scheduled workflows after 60 days without activity in the repository.
+        run: |
+          cd mirror
+          git fetch -q origin "${{ github.ref_name }}"
+          if [ $(( $(date +%s) - $(git log -1 --format=%ct FETCH_HEAD) )) -gt $(( 45 * 86400 )) ]; then
+            git checkout -q FETCH_HEAD
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q --allow-empty -m "Keep the mirror schedule active"
+            git push -q origin "HEAD:refs/heads/${{ github.ref_name }}"
+          fi
